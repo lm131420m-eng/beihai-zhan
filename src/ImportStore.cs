@@ -11,7 +11,7 @@ using System.Web.Script.Serialization;
 
 internal sealed class ImportRecord
 {
-    public int id; public string title, platform, genre, format, type, ext, path, original, source, date, hash, preview, chunk;
+    public int id; public string title, platform, genre, format, type, ext, path, original, source, date, hash, preview, chunk, content, description;
     public string[] aliases; public long size; public int chars; public string collection;
 }
 internal sealed class ImportResult
@@ -36,6 +36,43 @@ internal sealed class ImportStore
         return records;
     }
     public string CatalogJson() { return json.Serialize(Load()); }
+
+    public ImportResult AddPrompt(string title, string description, string content, string collection = "writing", string promptType = "提示词")
+    {
+        var result=new ImportResult();
+        try
+        {
+            title=(title??"").Trim(); description=(description??"").Trim(); content=(content??"").Trim();
+            if(title.Length==0 || content.Length==0) throw new IOException("提示词名称和提示词正文不能为空");
+            var records=Load();
+            string hash;
+            using(var sha=SHA256.Create()) hash=BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(title+"\n"+description+"\n"+content))).Replace("-","").ToLowerInvariant();
+            if(records.Any(r=>String.Equals(r.hash,hash,StringComparison.OrdinalIgnoreCase))) { result.Duplicates=1;return result; }
+            int id=records.Count==0?-1:records.Min(r=>r.id)-1;
+            string preview=description.Length>0?description:Regex.Replace(content,"\\s+"," ").Trim();
+            preview=preview.Substring(0,Math.Min(140,preview.Length));
+            records.Add(new ImportRecord {
+                id=id,title=title,platform=promptType=="功能性提示词"?"功能性提示词":"我的提示词",genre=promptType=="功能性提示词"?"功能性提示词":"用户提示词",format="文本",type="提示词",ext="TXT",
+                path="__imports__/prompts/"+hash+".txt",original=title+".txt",aliases=new[]{title},source="用户手动录入",
+                date=DateTime.Now.ToString("yyyy-MM-dd"),hash=hash,size=Encoding.UTF8.GetByteCount(content),chars=Regex.Replace(content,"\\s","").Length,
+                preview=preview,chunk=null,content=content,description=description,collection=collection
+            });
+            Directory.CreateDirectory(Path.Combine(Root,"prompts"));
+            File.WriteAllText(Path.Combine(Root,"prompts",hash+".txt"),content,new UTF8Encoding(false));
+            Save(records); result.Added=1;
+        }
+        catch(Exception ex) { result.Failed=1;result.Details.Add(ex.Message); }
+        return result;
+    }
+
+    private void Save(List<ImportRecord> records)
+    {
+        string catalog=Path.Combine(Root,"catalog.json"), temp=Path.Combine(Root,"catalog.next.json");
+        using(var stream=new FileStream(temp,FileMode.Create,FileAccess.Write,FileShare.None))
+        { var bytes=Encoding.UTF8.GetBytes(json.Serialize(records));stream.Write(bytes,0,bytes.Length);stream.Flush(true); }
+        if(File.Exists(catalog)) File.Replace(temp,catalog,Path.Combine(Root,"catalog.backup.json"));
+        else File.Move(temp,catalog);
+    }
     public static HashSet<string> BuiltinHashes(string html)
     {
         return new HashSet<string>(Regex.Matches(html,"\"hash\"\\s*:\\s*\"([a-f0-9]{10,64})\"").Cast<Match>().Select(m=>m.Groups[1].Value),StringComparer.OrdinalIgnoreCase);
@@ -55,7 +92,7 @@ internal sealed class ImportStore
                 using(var sha = SHA256.Create()) hash = BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-","").ToLowerInvariant();
                 if(hashes.Contains(hash) || builtins.Contains(hash) || builtins.Contains(hash.Substring(0,10))) { result.Duplicates++; return; }
                 string ext=Path.GetExtension(name).ToLowerInvariant();
-                bool readable=ext==".docx" || ext==".txt" || ext==".md";
+                bool readable=ext==".docx" || ext==".txt" || ext==".md" || ext==".htm" || ext==".html";
                 string body=ext==".docx" ? ReadDocx(bytes) : readable ? Decode(bytes) : "";
                 if(readable && String.IsNullOrWhiteSpace(body)) throw new IOException("没有可读取的正文");
                 string basename=Path.GetFileName(name.Replace('\\','/'));
@@ -111,16 +148,12 @@ internal sealed class ImportStore
         }
         if(result.Added>0)
         {
-            string catalog=Path.Combine(Root,"catalog.json"), temp=Path.Combine(Root,"catalog.next.json");
-            using(var stream=new FileStream(temp,FileMode.Create,FileAccess.Write,FileShare.None))
-            { var bytes=Encoding.UTF8.GetBytes(json.Serialize(records)); stream.Write(bytes,0,bytes.Length); stream.Flush(true); }
-            if(File.Exists(catalog)) File.Replace(temp,catalog,Path.Combine(Root,"catalog.backup.json"));
-            else File.Move(temp,catalog);
+            Save(records);
         }
         File.WriteAllText(Path.Combine(Root,"最近导入结果.txt"),DateTime.Now+"\r\n"+result.Summary+"\r\n"+String.Join("\r\n",result.Details),Encoding.UTF8);
         return result;
     }
-    private static bool Supported(string path) { string ext=Path.GetExtension(path).ToLowerInvariant(); return new[]{".txt",".md",".docx",".pdf",".png",".jpg",".jpeg",".webp",".gif",".mp4",".mov",".webm",".mp3",".wav",".flac",".glb",".gltf",".obj"}.Contains(ext); }
+    private static bool Supported(string path) { string ext=Path.GetExtension(path).ToLowerInvariant(); return new[]{".txt",".md",".docx",".htm",".html",".pdf",".png",".jpg",".jpeg",".jfif",".webp",".gif",".bmp",".svg",".avif",".heic",".heif",".tif",".tiff",".ico",".mp4",".mov",".webm",".mp3",".wav",".flac",".glb",".gltf",".obj"}.Contains(ext); }
     private static byte[] ReadLimited(Stream stream,long limit)
     {
         using(var output=new MemoryStream()) { byte[] buffer=new byte[81920]; int n; while((n=stream.Read(buffer,0,buffer.Length))>0) { if(output.Length+n>limit) throw new IOException("解压内容过大"); output.Write(buffer,0,n); } return output.ToArray(); }

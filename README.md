@@ -4,7 +4,7 @@
 
 ## 下载
 
-请前往 [Releases](https://github.com/lm131420m-eng/beihai-zhan/releases/latest) 下载 `北海栈-v*-Windows-x64.zip`，完整解压后运行 `北海栈.exe`。
+请前往 [Releases](https://github.com/lm131420m-eng/beihai-zhan/releases/latest) 下载 `beihaiZ-v*-Windows-x64.zip`，完整解压后运行 `北海栈.exe`。
 
 ## 更新
 
@@ -13,7 +13,7 @@
 发布新版本时：
 
 1. 修改 `Beihai.cs` 中的 `AppVersion`。
-2. 重新构建并打包为 `北海栈-v版本号-Windows-x64.zip`。
+2. 重新构建并打包为 `beihaiZ-v版本号-Windows-x64.zip`。
 3. 在 GitHub 创建相同版本号的 Release，并上传压缩包。
 
 ## 系统要求
@@ -24,4 +24,5 @@
 ## 第三方组件
 
 番茄小说下载功能来自 [POf-L/Fanqie-novel-Downloader](https://github.com/POf-L/Fanqie-novel-Downloader)。完整发行包同时保留对应来源与说明文件。
+
 

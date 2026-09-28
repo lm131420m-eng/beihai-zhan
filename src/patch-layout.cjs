@@ -1,5 +1,5 @@
 const fs = require('fs');
-const p = 'output/北海栈/北海.html';
+const p = 'output/beihaiZ/北海.html';
 let s = fs.readFileSync(p, 'utf8');
 const replacements = [
   [
@@ -91,3 +91,4 @@ if (!s.includes('const collectionFilterRender=render;')) {
 s = s.replace(/(?:let fanqieCommit=false;\s*){2,}/g, 'let fanqieCommit=false;\n');
 s = s.replace(/(?: if\(collection==='fanqie'&&!fanqieCommit\)\{window\.chrome\?\.webview\?\.postMessage\('prepare-fanqie'\);return;\}\s*){2,}/g, " if(collection==='fanqie'&&!fanqieCommit){window.chrome?.webview?.postMessage('prepare-fanqie');return;}\n");
 fs.writeFileSync(p, s);
+

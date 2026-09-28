@@ -1,13 +1,13 @@
-﻿$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'
 $project = $PSScriptRoot
 $workspace = Split-Path $project -Parent
-$release = Join-Path $workspace 'output\北海栈'
+$release = Join-Path $workspace 'output\beihaiZ'
 $sdk = Join-Path $project 'vendor\webview2'
 New-Item -ItemType Directory -Path $release -Force | Out-Null
 $fanqieDir = Join-Path $release '第三方工具\番茄小说下载器'
 New-Item -ItemType Directory -Path $fanqieDir -Force | Out-Null
 Copy-Item -LiteralPath "$project\fanqie-download\FanqieNovelDownloader.exe","$project\fanqie-download\SHA256SUMS-unsigned.txt","$project\fanqie-download\来源与说明.txt" -Destination $fanqieDir -Force
-if ((Get-FileHash -LiteralPath "$fanqieDir\FanqieNovelDownloader.exe" -Algorithm SHA256).Hash.ToLowerInvariant() -ne '9ed29ace9e977f5b306973119b369844d4be4d3d3f931230327aae3818270891') { throw 'Fanqie downloader SHA-256 verification failed' }
+if ((Get-FileHash -LiteralPath "$fanqieDir\FanqieNovelDownloader.exe" -Algorithm SHA256).Hash.ToLowerInvariant() -ne '0783255134e177d586e4b60803946180ceb4320f228d4e5dffde54c9063fddff') { throw 'Fanqie downloader SHA-256 verification failed' }
 Copy-Item -LiteralPath "$sdk\lib\net462\Microsoft.Web.WebView2.Core.dll","$sdk\lib\net462\Microsoft.Web.WebView2.WinForms.dll","$sdk\runtimes\win-x64\native\WebView2Loader.dll" -Destination $release -Force
 Copy-Item -LiteralPath "$sdk\LICENSE.txt" -Destination "$release\WebView2-LICENSE.txt" -Force
 & "$project\make-brand-assets.ps1" -Source "$project\assets\logo-source.png" -PngOutput "$release\北海栈-logo.png" -IcoOutput "$release\北海.ico"

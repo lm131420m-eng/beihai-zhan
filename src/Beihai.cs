@@ -49,6 +49,7 @@ internal sealed class LibraryForm : Form
     private ImportStore imports;
     private string catalogScript;
     private string pendingPlatform;
+    private string pendingCategory;
     private string pendingCollection="writing";
     private bool importing;
     private bool dark;
@@ -69,8 +70,8 @@ internal sealed class LibraryForm : Form
     private WinEventDelegate fanqieShowCallback;
     private double headerFraction;
     private readonly string themeFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"BeihaiLibrary","theme.txt");
-    private const string FanqieSha256="9ed29ace9e977f5b306973119b369844d4be4d3d3f931230327aae3818270891";
-    private const string AppVersion="1.0.0";
+    private const string FanqieSha256="0783255134e177d586e4b60803946180ceb4320f228d4e5dffde54c9063fddff";
+    private const string AppVersion="1.1.0";
     private const string AppReleaseApi="https://api.github.com/repos/lm131420m-eng/beihai-zhan/releases/latest";
     private const string AppReleasePage="https://github.com/lm131420m-eng/beihai-zhan/releases/latest";
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd,int attr,ref int value,int size);
@@ -111,11 +112,9 @@ internal sealed class LibraryForm : Form
         if (File.Exists(iconPath)) Icon = new Icon(iconPath);
         var menu = new MenuStrip();
         menu.BackColor = Color.White;
-        var importMenu = new ToolStripMenuItem("导入文件");
-        importMenu.Click += async delegate { await ImportFiles(); };
         themeMenu = new ToolStripMenuItem("深色模式") { Checked=dark };
         themeMenu.Click += async delegate { await ChangeTheme(!dark,true); };
-        menu.Items.AddRange(new ToolStripItem[] {importMenu, themeMenu});
+        menu.Items.Add(themeMenu);
         var settings=new ToolStripMenuItem("设置") { Alignment=ToolStripItemAlignment.Right,DropDownDirection=ToolStripDropDownDirection.BelowLeft };
         var zoomMenu=new ToolStripMenuItem("界面缩放 · 100%");
         var zoom=new TrackBar { Minimum=6,Maximum=20,Value=10,SmallChange=1,LargeChange=2,TickFrequency=2,Width=220,Height=45,AutoSize=false,AccessibleName="界面缩放，60% 到 200%" };
@@ -175,7 +174,11 @@ internal sealed class LibraryForm : Form
                     double fraction;
                     if(double.TryParse(message.Substring(12),System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out fraction)&&fraction>0&&fraction<1){headerFraction=fraction;LayoutFanqieHost();}
                 }
-                else if(message=="import-files") await ImportFiles();
+                else if(message=="import-files" || message=="import-novel") await ImportFiles("writing");
+                else if(message=="import-script") await ImportFiles("scripts");
+                else if(message=="import-asset") await ImportFiles("aigc");
+                else if(message=="import-prompt") await ImportPrompt("writing");
+                else if(message=="import-functional-prompt") await ImportPrompt("aigc");
                 else if((message=="open-fanqie"||message=="embed-fanqie"||message=="prepare-fanqie")&&!test&&!embedTest) await EnsureFanqieEmbedded();
                 else if(message=="hide-fanqie") HideFanqie();
                 else if(message=="open-fanqie-folder") OpenLocal(FanqieDirectory());
@@ -214,9 +217,9 @@ internal sealed class LibraryForm : Form
                 if (!e.IsSuccess) { loading.Text = "页面加载失败：" + e.WebErrorStatus; if(test) FinishTest(false, loading.Text); }
                 else {
                     if(!test&&!embedTest&&!appUpdateCheckStarted){appUpdateCheckStarted=true;CheckForAppUpdates(true);}
-                    if(pendingPlatform!=null) {
-                        string platform=pendingPlatform; pendingPlatform=null;
-                        await web.ExecuteScriptAsync("window.switchCollection("+json.Serialize(pendingCollection)+");Object.assign(state,{category:'all',platform:window.collectionPlatformFor("+json.Serialize(platform)+"),genre:'全部分类',query:'',page:1});$('query').value='';resetPage();");
+                    if(pendingPlatform!=null || pendingCategory!=null) {
+                        string platform=pendingPlatform??"",category=pendingCategory??"all"; pendingPlatform=null;pendingCategory=null;
+                        await web.ExecuteScriptAsync("window.switchCollection("+json.Serialize(pendingCollection)+");window.showPlatformGuide?.(false);Object.assign(state,{category:"+json.Serialize(category)+",platform:"+(platform.Length>0?"window.collectionPlatformFor("+json.Serialize(platform)+")":"''")+",genre:'全部分类',query:'',page:1});$('query').value='';resetPage();");
                     }
                     if (test && !testing) { testing = true; await SelfTest(); }
                     else if(embedTest&&!embedTestStarted){embedTestStarted=true;await RunEmbedTest();}
@@ -530,66 +533,89 @@ internal sealed class LibraryForm : Form
         themeScript=await web.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync("window.BEIHAI_THEME='"+name+"';");
         await web.ExecuteScriptAsync("window.setBeihaiTheme?.('"+name+"')");
     }
-    private async Task ImportFiles()
+    private async Task ImportFiles(string targetCollection)
     {
         if(importing || imports==null || web.CoreWebView2==null) return;
-        string currentCollection=json.Deserialize<string>(await web.ExecuteScriptAsync("window.activeCollection||'writing'"));
         string[] files;
         using(var picker=new OpenFileDialog())
         {
-            picker.Title="选择要导入的例文或压缩包（可多选）";
-            picker.Filter="支持的文档与资产|*.txt;*.md;*.docx;*.pdf;*.png;*.jpg;*.jpeg;*.webp;*.gif;*.mp4;*.mov;*.webm;*.mp3;*.wav;*.flac;*.glb;*.gltf;*.obj;*.zip|文本与Word|*.txt;*.md;*.docx|图像|*.png;*.jpg;*.jpeg;*.webp;*.gif|音视频|*.mp4;*.mov;*.webm;*.mp3;*.wav;*.flac|ZIP 压缩包|*.zip";
+            picker.Title=targetCollection=="writing"?"选择要导入的小说文档或压缩包（可多选）":targetCollection=="scripts"?"选择要导入的剧本文档或压缩包（可多选）":"选择要导入的 AIGC 资产或压缩包（可多选）";
+            picker.Filter=targetCollection=="aigc"?"文档、图片、音视频、模型与压缩包|*.txt;*.md;*.docx;*.htm;*.html;*.pdf;*.png;*.jpg;*.jpeg;*.jfif;*.webp;*.gif;*.bmp;*.svg;*.avif;*.heic;*.heif;*.tif;*.tiff;*.ico;*.mp4;*.mov;*.webm;*.mp3;*.wav;*.flac;*.glb;*.gltf;*.obj;*.zip|常见图片|*.png;*.jpg;*.jpeg;*.jfif;*.webp;*.gif;*.bmp;*.svg;*.avif;*.heic;*.heif;*.tif;*.tiff;*.ico|所有文件|*.*":"文档与压缩包|*.txt;*.md;*.docx;*.htm;*.html;*.pdf;*.zip|文本、Markdown 与 Word|*.txt;*.md;*.docx;*.htm;*.html|PDF 文档|*.pdf|ZIP 压缩包|*.zip";
             picker.Multiselect=true;
             if(picker.ShowDialog(this)!=DialogResult.OK) return;
             files=picker.FileNames;
         }
-        string platform,genre,collection;
+        string platform,genre;
         using(var dialog=new Form())
         {
-            dialog.Text="导入到资料库"; dialog.ClientSize=new Size(460,325); dialog.StartPosition=FormStartPosition.CenterParent;
+            dialog.Text=targetCollection=="writing"?"导入小说":targetCollection=="scripts"?"导入剧本":"导入 AIGC 资产"; dialog.ClientSize=new Size(460,278); dialog.StartPosition=FormStartPosition.CenterParent;
             dialog.FormBorderStyle=FormBorderStyle.FixedDialog; dialog.MaximizeBox=false; dialog.MinimizeBox=false; dialog.Font=Font;
-            var intro=new Label{Text="已选择 "+files.Length+" 个文件。ZIP 内的支持格式会自动导入。",Left=22,Top=18,Width=415,Height=45};
-            var collectionLabel=new Label{Text="大类目",Left=22,Top=76,Width=110};
-            var collectionBox=new ComboBox{Left=140,Top=71,Width=290,DropDownStyle=ComboBoxStyle.DropDownList};
-            collectionBox.Items.AddRange(new object[]{"写作","剧本","AIGC资产"});
-            collectionBox.SelectedIndex=currentCollection=="scripts"?1:currentCollection=="aigc"?2:0;
-            var sourceLabel=new Label{Text="平台 / 来源",Left=22,Top=80,Width=110};
-            var sourceBox=new TextBox{Text="我的导入",Left=140,Top=75,Width=290,MaxLength=60};
-            var genreLabel=new Label{Text="题材 / 分类",Left=22,Top=123,Width=110};
-            var genreBox=new TextBox{Text=files.Length==1 && Path.GetExtension(files[0]).Equals(".zip",StringComparison.OrdinalIgnoreCase)?Path.GetFileNameWithoutExtension(files[0]):"自定义资料",Left=140,Top=118,Width=290,MaxLength=60};
-            var tip=new Label{Text="导入后可搜索、收藏和阅读；内容相同的文件自动跳过。\n旧版 .doc 请先另存为 .docx。",Left=22,Top=163,Width=415,Height=50,ForeColor=Color.DimGray};
-            var ok=new Button{Text="开始导入",Left=236,Top=223,Width=96,Height=32};
-            var cancel=new Button{Text="取消",Left=344,Top=223,Width=86,Height=32,DialogResult=DialogResult.Cancel};
-            ok.Click+=(s,e)=>{if(String.IsNullOrWhiteSpace(sourceBox.Text)||String.IsNullOrWhiteSpace(genreBox.Text)) { MessageBox.Show(dialog,"请填写平台 / 来源和题材 / 分类。");return;}dialog.DialogResult=DialogResult.OK;};
-            dialog.Controls.AddRange(new Control[]{intro,sourceLabel,sourceBox,genreLabel,genreBox,tip,ok,cancel}); dialog.AcceptButton=ok; dialog.CancelButton=cancel;
-            foreach(Control control in new Control[]{sourceLabel,sourceBox,genreLabel,genreBox,tip,ok,cancel})control.Top+=48;
-            dialog.Controls.AddRange(new Control[]{collectionLabel,collectionBox});
-            tip.Text="文本文档可直接阅读，图像、音视频及其他资产可打开原文件。\n内容相同的文件自动跳过。";
-            if(dark) {
-                dialog.BackColor=Color.FromArgb(34,34,46);dialog.ForeColor=Color.FromArgb(233,231,242);
-                foreach(Control control in dialog.Controls) {
-                    control.ForeColor=dialog.ForeColor;
-                    if(control is TextBox || control is Button) control.BackColor=Color.FromArgb(48,43,64);
-                    var button=control as Button;if(button!=null){button.UseVisualStyleBackColor=false;button.FlatStyle=FlatStyle.Flat;}
-                }
-                tip.ForeColor=Color.FromArgb(185,178,204);
-            }
-            if(dialog.ShowDialog(this)!=DialogResult.OK) return;
+            var intro=new Label{Text="已选择 "+files.Length+" 个文件。请设置来源和分类。",Left=22,Top=18,Width=415,Height=45};
+            var sourceLabel=new Label{Text=targetCollection=="writing"?"小说平台":"来源",Left=22,Top=80,Width=110};
+            var sourceBox=new ComboBox{Text=targetCollection=="writing"?"番茄":targetCollection=="scripts"?"我的剧本":"我的资产",Left=140,Top=75,Width=290,MaxLength=60,DropDownStyle=ComboBoxStyle.DropDown};
+            sourceBox.Items.AddRange(targetCollection=="writing"?new object[]{"番茄","七猫","知乎","黑岩","点众","九州","果悦","其他"}:targetCollection=="scripts"?new object[]{"我的剧本","剧本学习","短剧","影视项目","其他"}:new object[]{"我的资产","图像素材","音视频素材","提示词素材","三维模型","其他"});
+            var genreLabel=new Label{Text=targetCollection=="writing"?"小说类型":"分类",Left=22,Top=123,Width=110};
+            var genreBox=new ComboBox{Text=targetCollection=="writing"?"自定义资料":targetCollection=="scripts"?"剧本文档":"创作资产",Left=140,Top=118,Width=290,MaxLength=60,DropDownStyle=ComboBoxStyle.DropDown};
+            genreBox.Items.AddRange(targetCollection=="writing"?new object[]{"亲情家庭","题材标注","世情爽文","追妻追夫","悬疑灵异","脑洞幻想","古言仙侠","甜宠恋爱","现代言情","双男双女与纯爱","海外擦边专题","虐爽文专题","中秋、国庆专题","精神小妹专题","超短专题","时空对话梗","自定义资料"}:targetCollection=="scripts"?new object[]{"剧本文档","故事梗概","分场大纲","人物小传","分镜资料","其他"}:new object[]{"创作资产","角色图","场景图","分镜图","视频","音频","提示词","三维模型","其他"});
+            var tip=new Label{Text=targetCollection=="aigc"?"支持文档、常见图片、音视频和模型；重复内容会自动跳过。\nHEIC、TIFF 等格式是否能预览取决于 Windows 解码组件。":"支持 DOCX、TXT、Markdown、HTML 和 PDF；重复内容会自动跳过。\n旧版 .doc 请先另存为 .docx。",Left=22,Top=163,Width=415,Height=42,ForeColor=Color.DimGray};
+            var ok=new Button{Text="开始导入",Left=236,Top=218,Width=96,Height=32};
+            var cancel=new Button{Text="取消",Left=344,Top=218,Width=86,Height=32,DialogResult=DialogResult.Cancel};
+            ok.Click+=(sender,e)=>{if(String.IsNullOrWhiteSpace(sourceBox.Text)||String.IsNullOrWhiteSpace(genreBox.Text)){MessageBox.Show(dialog,"请选择或填写小说平台和小说类型。");return;}dialog.DialogResult=DialogResult.OK;};
+            dialog.Controls.AddRange(new Control[]{intro,sourceLabel,sourceBox,genreLabel,genreBox,tip,ok,cancel});dialog.AcceptButton=ok;dialog.CancelButton=cancel;
+            if(dark){dialog.BackColor=Color.FromArgb(34,34,46);dialog.ForeColor=Color.FromArgb(233,231,242);foreach(Control control in dialog.Controls){control.ForeColor=dialog.ForeColor;if(control is TextBox||control is ComboBox||control is Button)control.BackColor=Color.FromArgb(48,43,64);var button=control as Button;if(button!=null){button.UseVisualStyleBackColor=false;button.FlatStyle=FlatStyle.Flat;}}tip.ForeColor=Color.FromArgb(185,178,204);}
+            if(dialog.ShowDialog(this)!=DialogResult.OK)return;
             platform=sourceBox.Text.Trim();genre=genreBox.Text.Trim();
-            collection=new[]{"writing","scripts","aigc"}[collectionBox.SelectedIndex];
         }
-        importing=true; loading.Text="正在导入资料，请稍候…"; loading.Visible=true; loading.BringToFront();
+        importing=true;loading.Text="正在导入小说，请稍候…";loading.Visible=true;loading.BringToFront();
         try
         {
             var known=ImportStore.BuiltinHashes(File.ReadAllText(Path.Combine(root,"北海.html")));
-            var result=await Task.Run(()=>imports.Import(files,platform,genre,known,message=>{ if(!IsDisposed) BeginInvoke(new Action(()=>loading.Text=message)); },collection));
+            var result=await Task.Run(()=>imports.Import(files,platform,genre,known,message=>{if(!IsDisposed)BeginInvoke(new Action(()=>loading.Text=message));},targetCollection));
             await UpdateImportCatalog();
-            if(result.Added>0) { pendingPlatform=platform;pendingCollection=collection; web.CoreWebView2.Reload(); }
-            string details=result.Details.Count>0 ? "\n\n"+String.Join("\n",result.Details.GetRange(0,Math.Min(5,result.Details.Count)))+"\n\n完整结果见“资料库 → 打开我的导入文件夹”。" : "";
+            if(result.Added>0){pendingPlatform=platform;pendingCategory=targetCollection=="writing"?"stories":"all";pendingCollection=targetCollection;web.CoreWebView2.Reload();}
+            string details=result.Details.Count>0?"\n\n"+String.Join("\n",result.Details.GetRange(0,Math.Min(5,result.Details.Count))):"";
             MessageBox.Show(this,result.Summary+details,"导入完成",MessageBoxButtons.OK,result.Failed>0?MessageBoxIcon.Warning:MessageBoxIcon.Information);
         }
-        catch(Exception ex) { MessageBox.Show(this,"导入未完成："+ex.Message,"导入失败",MessageBoxButtons.OK,MessageBoxIcon.Error); }
-        finally { importing=false;loading.Visible=false; }
+        catch(Exception ex){MessageBox.Show(this,"导入未完成："+ex.Message,"导入失败",MessageBoxButtons.OK,MessageBoxIcon.Error);}
+        finally{importing=false;loading.Visible=false;}
+    }
+
+    private async Task ImportPrompt(string targetCollection)
+    {
+        if(importing || imports==null || web.CoreWebView2==null)return;
+        string title="",description="",content="";
+        using(var dialog=new Form())
+        {
+            bool functional=targetCollection=="aigc";
+            dialog.Text=functional?"导入功能性提示词":"导入提示词";dialog.ClientSize=new Size(620,540);dialog.StartPosition=FormStartPosition.CenterParent;
+            dialog.FormBorderStyle=FormBorderStyle.FixedDialog;dialog.MaximizeBox=false;dialog.MinimizeBox=false;dialog.Font=Font;
+            var titleLabel=new Label{Text="提示词名称",Left=22,Top=24,Width=100};
+            var titleBox=new TextBox{Left=128,Top=20,Width=466,MaxLength=100};
+            var descriptionLabel=new Label{Text="简介",Left=22,Top=68,Width=100};
+            var descriptionBox=new TextBox{Left=128,Top=64,Width=466,Height=72,Multiline=true,MaxLength=500,ScrollBars=ScrollBars.Vertical};
+            var contentLabel=new Label{Text="提示词正文",Left=22,Top=154,Width=100};
+            var contentBox=new TextBox{Left=128,Top=150,Width=466,Height=315,Multiline=true,AcceptsReturn=true,AcceptsTab=true,ScrollBars=ScrollBars.Vertical,MaxLength=200000};
+            var tip=new Label{Text="名称和正文为必填项；简介会显示在提示词卡片中。",Left=128,Top=474,Width=360,Height=28,ForeColor=Color.DimGray};
+            var ok=new Button{Text="保存提示词",Left=390,Top=497,Width=102,Height=32};
+            var cancel=new Button{Text="取消",Left=504,Top=497,Width=90,Height=32,DialogResult=DialogResult.Cancel};
+            ok.Click+=(sender,e)=>{if(String.IsNullOrWhiteSpace(titleBox.Text)||String.IsNullOrWhiteSpace(contentBox.Text)){MessageBox.Show(dialog,"请填写提示词名称和提示词正文。","内容不完整");return;}dialog.DialogResult=DialogResult.OK;};
+            dialog.Controls.AddRange(new Control[]{titleLabel,titleBox,descriptionLabel,descriptionBox,contentLabel,contentBox,tip,ok,cancel});dialog.AcceptButton=ok;dialog.CancelButton=cancel;
+            if(dark){dialog.BackColor=Color.FromArgb(34,34,46);dialog.ForeColor=Color.FromArgb(233,231,242);foreach(Control control in dialog.Controls){control.ForeColor=dialog.ForeColor;if(control is TextBox||control is Button)control.BackColor=Color.FromArgb(48,43,64);var button=control as Button;if(button!=null){button.UseVisualStyleBackColor=false;button.FlatStyle=FlatStyle.Flat;}}tip.ForeColor=Color.FromArgb(185,178,204);}
+            if(dialog.ShowDialog(this)!=DialogResult.OK)return;
+            title=titleBox.Text;description=descriptionBox.Text;content=contentBox.Text;
+        }
+        importing=true;
+        try
+        {
+            bool functional=targetCollection=="aigc";
+            var result=await Task.Run(()=>imports.AddPrompt(title,description,content,targetCollection,functional?"功能性提示词":"提示词"));
+            if(result.Failed>0)throw new IOException(String.Join("\n",result.Details));
+            if(result.Duplicates>0){MessageBox.Show(this,"相同的提示词已经存在。","未重复添加",MessageBoxButtons.OK,MessageBoxIcon.Information);return;}
+            await UpdateImportCatalog();pendingPlatform="";pendingCategory=functional?"functional-prompts":"prompts";pendingCollection=targetCollection;web.CoreWebView2.Reload();
+            MessageBox.Show(this,functional?"功能性提示词已添加到 AIGC 资产。":"提示词已添加到提示词库。","保存成功",MessageBoxButtons.OK,MessageBoxIcon.Information);
+        }
+        catch(Exception ex){MessageBox.Show(this,"提示词保存失败："+ex.Message,"保存失败",MessageBoxButtons.OK,MessageBoxIcon.Error);}
+        finally{importing=false;}
     }
     private void OpenUri(string address)
     {
@@ -706,3 +732,4 @@ internal sealed class LibraryForm : Form
         Close();
     }
 }
+
